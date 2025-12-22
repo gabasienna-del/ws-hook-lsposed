@@ -6,155 +6,48 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import java.util.List;
-import java.util.Map;
+import okhttp3.WebSocket;
+import okio.ByteString;
 
 public class HookEntry implements IXposedHookLoadPackage {
 
     private static final String TARGET = "kz.asemainala.app";
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
+    public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        if (!lpparam.packageName.equals(TARGET)) return;
 
-        if (!TARGET.equals(lpparam.packageName)) return;
-
-        XposedBridge.log("🔥 WS-HOOK (headers-all) loaded for " + TARGET);
-
-        try {
-            Class<?> builderCls =
-                    lpparam.classLoader.loadClass("okhttp3.Request$Builder");
-
-            // addHeader(key, value)
-            XposedBridge.hookAllMethods(builderCls, "addHeader", headerHook("addHeader"));
-
-            // header(key, value)
-            XposedBridge.hookAllMethods(builderCls, "header", headerHook("header"));
-
-            // headers(Headers)
-            XposedBridge.hookAllMethods(
-                    builderCls,
-                    "headers",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            try {
-                                Object headers = param.args[0];
-                                Map<?, ?> map = (Map<?, ?>) XposedHelpers.callMethod(headers, "toMultimap");
-
-                                for (Map.Entry<?, ?> e : map.entrySet()) {
-                                    String key = String.valueOf(e.getKey());
-                                    List<?> values = (List<?>) e.getValue();
-                                    for (Object v : values) {
-                                        XposedBridge.log("📡 headers() → " + key + " = " + v);
-                                    }
-                                }
-                            } catch (Throwable t) {
-                                XposedBridge.log("❌ headers() error: " + t);
-                            }
-                        }
-                    }
-            );
-
-            // build() — финальный Request
-            XposedBridge.hookAllMethods(
-                    builderCls,
-                    "build",
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Object request = param.getResult();
-                                Object url = XposedHelpers.callMethod(request, "url");
-                                Object headers = XposedHelpers.callMethod(request, "headers");
-
-                                XposedBridge.log("🧠 REQUEST BUILT → " + url);
-
-                                Map<?, ?> map = (Map<?, ?>) XposedHelpers.callMethod(headers, "toMultimap");
-                                for (Map.Entry<?, ?> e : map.entrySet()) {
-                                    String key = String.valueOf(e.getKey());
-                                    List<?> values = (List<?>) e.getValue();
-                                    for (Object v : values) {
-                                        XposedBridge.log("📡 FINAL HEADER → " + key + " = " + v);
-                                    }
-                                }
-                            } catch (Throwable t) {
-                                XposedBridge.log("❌ build() error: " + t);
-                            }
-                        }
-                    }
-            );
-
-        } catch (Throwable t) {
-            XposedBridge.log("❌ Failed to hook Request.Builder: " + t);
-        }
-    }
-
-    private XC_MethodHook headerHook(String tag) {
-        return new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) {
-                try {
-                    String key = String.valueOf(param.args[0]);
-                    String value = String.valueOf(param.args[1]);
-
-                    XposedBridge.log("📡 " + tag + " → " + key + " = " + value);
-                } catch (Throwable t) {
-                    XposedBridge.log("❌ " + tag + " error: " + t);
-                }
-            }
-        };
-    }
-}
+        XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
 
         try {
-            Class<?> wsListener =
-                    lpparam.classLoader.loadClass("okhttp3.WebSocketListener");
-
-            // onMessage(WebSocket, String)
             XposedHelpers.findAndHookMethod(
-                    wsListener,
+                    WebSocket.class,
                     "onMessage",
-                    lpparam.classLoader,
-                    Class.forName("okhttp3.WebSocket"),
-                    String.class,
+                    ByteString.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            String msg = (String) param.args[1];
-                            XposedBridge.log("📨 WS TEXT → " + msg);
+                            ByteString bs = (ByteString) param.args[0];
+                            byte[] data = bs.toByteArray();
+
+                            String hex = bytesToHex(data);
+                            XposedBridge.log("📦 WS BINARY HEX → " + hex);
                         }
                     }
             );
 
-            // onMessage(WebSocket, ByteString)
-            XposedHelpers.findAndHookMethod(
-                    wsListener,
-                    "onMessage",
-                    lpparam.classLoader,
-                    Class.forName("okhttp3.WebSocket"),
-                    Class.forName("okio.ByteString"),
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            Object bs = param.args[1];
-                            byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
-                            XposedBridge.log("📨 WS BINARY → " + bytesToHex(data));
-                        }
-                    }
-            );
-
-            XposedBridge.log("🔥 WS-HOOK onMessage() active");
+            XposedBridge.log("✅ WS-HOOK onMessage(ByteString) active");
 
         } catch (Throwable t) {
-            XposedBridge.log("❌ WS onMessage hook error: " + t);
+            XposedBridge.log("❌ WS-HOOK error: " + t);
         }
+    }
 
     private static String bytesToHex(byte[] bytes) {
-        if (bytes == null) return "null";
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) {
             sb.append(String.format("%02x", b));
         }
         return sb.toString();
     }
-
+}
