@@ -25,5 +25,9 @@ android {
 }
 
 dependencies {
+    // Xposed API
     compileOnly files('libs/api-82.jar')
+
+    // OkHttp (ТОЛЬКО для компиляции)
+    compileOnly 'com.squareup.okhttp3:okhttp:4.12.0'
 }
