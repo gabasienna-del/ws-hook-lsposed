@@ -18,24 +18,33 @@ public class HookEntry implements IXposedHookLoadPackage {
 
         if (!TARGET.equals(lpparam.packageName)) return;
 
-        XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
+        XposedBridge.log("🔥 WS-HOOK (Interceptor) loaded for " + TARGET);
 
         try {
-            Class<?> okHttpClientCls =
-                    lpparam.classLoader.loadClass("okhttp3.OkHttpClient");
+            Class<?> interceptorCls =
+                    lpparam.classLoader.loadClass("okhttp3.Interceptor");
 
             XposedBridge.hookAllMethods(
-                    okHttpClientCls,
-                    "newWebSocket",
+                    interceptorCls,
+                    "intercept",
                     new XC_MethodHook() {
+
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                Object request = param.args[0];
+                                Object chain = param.args[0];
+
+                                // Request
+                                Object request = XposedHelpers.callMethod(chain, "request");
 
                                 // URL
                                 Object url = XposedHelpers.callMethod(request, "url");
-                                XposedBridge.log("🧠 WS CONNECT → " + url);
+                                String urlStr = String.valueOf(url);
+
+                                // Фильтр — только WS порт
+                                if (!urlStr.contains(":20413")) return;
+
+                                XposedBridge.log("🧠 INTERCEPT → " + urlStr);
 
                                 // Headers
                                 Object headers = XposedHelpers.callMethod(request, "headers");
@@ -44,21 +53,20 @@ public class HookEntry implements IXposedHookLoadPackage {
                                 for (Map.Entry<?, ?> e : map.entrySet()) {
                                     String key = String.valueOf(e.getKey());
                                     List<?> values = (List<?>) e.getValue();
-
                                     for (Object v : values) {
-                                        XposedBridge.log("📡 WS HEADER → " + key + " = " + v);
+                                        XposedBridge.log("📡 HEADER → " + key + " = " + v);
                                     }
                                 }
 
                             } catch (Throwable t) {
-                                XposedBridge.log("❌ WS HEADER error: " + t);
+                                XposedBridge.log("❌ INTERCEPT error: " + t);
                             }
                         }
                     }
             );
 
         } catch (Throwable t) {
-            XposedBridge.log("❌ Failed to hook OkHttp WS: " + t);
+            XposedBridge.log("❌ Failed to hook Interceptor: " + t);
         }
     }
 }
