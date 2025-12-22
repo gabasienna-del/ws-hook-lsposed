@@ -38,7 +38,7 @@ public class HookEntry implements IXposedHookLoadPackage {
                 }
         );
 
-        // Incoming messages
+        // Incoming WebSocket messages
         XposedHelpers.findAndHookMethod(
                 "okhttp3.WebSocketListener",
                 lpparam.classLoader,
