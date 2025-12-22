@@ -6,9 +6,6 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-import java.util.List;
-import java.util.Map;
-
 public class HookEntry implements IXposedHookLoadPackage {
 
     private static final String TARGET = "kz.asemainala.app";
@@ -18,55 +15,43 @@ public class HookEntry implements IXposedHookLoadPackage {
 
         if (!TARGET.equals(lpparam.packageName)) return;
 
-        XposedBridge.log("🔥 WS-HOOK (Interceptor) loaded for " + TARGET);
+        XposedBridge.log("🔥 WS-HOOK (addHeader) loaded for " + TARGET);
 
         try {
-            Class<?> interceptorCls =
-                    lpparam.classLoader.loadClass("okhttp3.Interceptor");
+            Class<?> builderCls =
+                    lpparam.classLoader.loadClass("okhttp3.Request$Builder");
 
             XposedBridge.hookAllMethods(
-                    interceptorCls,
-                    "intercept",
+                    builderCls,
+                    "addHeader",
                     new XC_MethodHook() {
-
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
+
                             try {
-                                Object chain = param.args[0];
+                                String key = String.valueOf(param.args[0]);
+                                String value = String.valueOf(param.args[1]);
 
-                                // Request
-                                Object request = XposedHelpers.callMethod(chain, "request");
+                                // фильтр, чтобы не заспамить лог
+                                if (key.equalsIgnoreCase("Authorization")
+                                        || key.toLowerCase().contains("token")
+                                        || key.toLowerCase().contains("cookie")
+                                        || key.toLowerCase().contains("device")) {
 
-                                // URL
-                                Object url = XposedHelpers.callMethod(request, "url");
-                                String urlStr = String.valueOf(url);
-
-                                // Фильтр — только WS порт
-                                if (!urlStr.contains(":20413")) return;
-
-                                XposedBridge.log("🧠 INTERCEPT → " + urlStr);
-
-                                // Headers
-                                Object headers = XposedHelpers.callMethod(request, "headers");
-                                Map<?, ?> map = (Map<?, ?>) XposedHelpers.callMethod(headers, "toMultimap");
-
-                                for (Map.Entry<?, ?> e : map.entrySet()) {
-                                    String key = String.valueOf(e.getKey());
-                                    List<?> values = (List<?>) e.getValue();
-                                    for (Object v : values) {
-                                        XposedBridge.log("📡 HEADER → " + key + " = " + v);
-                                    }
+                                    XposedBridge.log(
+                                            "📡 addHeader → " + key + " = " + value
+                                    );
                                 }
 
                             } catch (Throwable t) {
-                                XposedBridge.log("❌ INTERCEPT error: " + t);
+                                XposedBridge.log("❌ addHeader error: " + t);
                             }
                         }
                     }
             );
 
         } catch (Throwable t) {
-            XposedBridge.log("❌ Failed to hook Interceptor: " + t);
+            XposedBridge.log("❌ Failed to hook addHeader: " + t);
         }
     }
 }
