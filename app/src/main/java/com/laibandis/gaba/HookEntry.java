@@ -105,3 +105,56 @@ public class HookEntry implements IXposedHookLoadPackage {
         };
     }
 }
+
+        try {
+            Class<?> wsListener =
+                    lpparam.classLoader.loadClass("okhttp3.WebSocketListener");
+
+            // onMessage(WebSocket, String)
+            XposedHelpers.findAndHookMethod(
+                    wsListener,
+                    "onMessage",
+                    lpparam.classLoader,
+                    Class.forName("okhttp3.WebSocket"),
+                    String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            String msg = (String) param.args[1];
+                            XposedBridge.log("📨 WS TEXT → " + msg);
+                        }
+                    }
+            );
+
+            // onMessage(WebSocket, ByteString)
+            XposedHelpers.findAndHookMethod(
+                    wsListener,
+                    "onMessage",
+                    lpparam.classLoader,
+                    Class.forName("okhttp3.WebSocket"),
+                    Class.forName("okio.ByteString"),
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            Object bs = param.args[1];
+                            byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
+                            XposedBridge.log("📨 WS BINARY → " + bytesToHex(data));
+                        }
+                    }
+            );
+
+            XposedBridge.log("🔥 WS-HOOK onMessage() active");
+
+        } catch (Throwable t) {
+            XposedBridge.log("❌ WS onMessage hook error: " + t);
+        }
+
+    private static String bytesToHex(byte[] bytes) {
+        if (bytes == null) return "null";
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
