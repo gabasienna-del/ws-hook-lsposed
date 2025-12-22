@@ -3,5 +3,21 @@
 
     <application
         android:label="WS Hook"
-        android:allowBackup="false"/>
+        android:allowBackup="false">
+
+        <!-- Обязательно для LSPosed -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true"/>
+
+        <meta-data
+            android:name="xposeddescription"
+            android:value="WebSocket hook for logging wss and push events"/>
+
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82"/>
+
+    </application>
+
 </manifest>
