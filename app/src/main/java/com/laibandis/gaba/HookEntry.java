@@ -6,6 +6,9 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+import java.util.List;
+import java.util.Map;
+
 public class HookEntry implements IXposedHookLoadPackage {
 
     private static final String TARGET = "kz.asemainala.app";
@@ -18,11 +21,9 @@ public class HookEntry implements IXposedHookLoadPackage {
         XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
 
         try {
-            // Загружаем OkHttpClient ИМЕННО из ClassLoader приложения
             Class<?> okHttpClientCls =
                     lpparam.classLoader.loadClass("okhttp3.OkHttpClient");
 
-            // Хукаем ВСЕ newWebSocket(...)
             XposedBridge.hookAllMethods(
                     okHttpClientCls,
                     "newWebSocket",
@@ -31,11 +32,26 @@ public class HookEntry implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 Object request = param.args[0];
-                                Object url = XposedHelpers.callMethod(request, "url");
 
-                                XposedBridge.log("🧠 WS CONNECT → " + url.toString());
+                                // URL
+                                Object url = XposedHelpers.callMethod(request, "url");
+                                XposedBridge.log("🧠 WS CONNECT → " + url);
+
+                                // Headers
+                                Object headers = XposedHelpers.callMethod(request, "headers");
+                                Map<?, ?> map = (Map<?, ?>) XposedHelpers.callMethod(headers, "toMultimap");
+
+                                for (Map.Entry<?, ?> e : map.entrySet()) {
+                                    String key = String.valueOf(e.getKey());
+                                    List<?> values = (List<?>) e.getValue();
+
+                                    for (Object v : values) {
+                                        XposedBridge.log("📡 WS HEADER → " + key + " = " + v);
+                                    }
+                                }
+
                             } catch (Throwable t) {
-                                XposedBridge.log("WS CONNECT error: " + t);
+                                XposedBridge.log("❌ WS HEADER error: " + t);
                             }
                         }
                     }
