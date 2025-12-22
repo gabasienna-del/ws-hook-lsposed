@@ -6,6 +6,9 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+import java.util.List;
+import java.util.Map;
+
 public class HookEntry implements IXposedHookLoadPackage {
 
     private static final String TARGET = "kz.asemainala.app";
@@ -15,43 +18,90 @@ public class HookEntry implements IXposedHookLoadPackage {
 
         if (!TARGET.equals(lpparam.packageName)) return;
 
-        XposedBridge.log("🔥 WS-HOOK (addHeader) loaded for " + TARGET);
+        XposedBridge.log("🔥 WS-HOOK (headers-all) loaded for " + TARGET);
 
         try {
             Class<?> builderCls =
                     lpparam.classLoader.loadClass("okhttp3.Request$Builder");
 
+            // addHeader(key, value)
+            XposedBridge.hookAllMethods(builderCls, "addHeader", headerHook("addHeader"));
+
+            // header(key, value)
+            XposedBridge.hookAllMethods(builderCls, "header", headerHook("header"));
+
+            // headers(Headers)
             XposedBridge.hookAllMethods(
                     builderCls,
-                    "addHeader",
+                    "headers",
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-
                             try {
-                                String key = String.valueOf(param.args[0]);
-                                String value = String.valueOf(param.args[1]);
+                                Object headers = param.args[0];
+                                Map<?, ?> map = (Map<?, ?>) XposedHelpers.callMethod(headers, "toMultimap");
 
-                                // фильтр, чтобы не заспамить лог
-                                if (key.equalsIgnoreCase("Authorization")
-                                        || key.toLowerCase().contains("token")
-                                        || key.toLowerCase().contains("cookie")
-                                        || key.toLowerCase().contains("device")) {
-
-                                    XposedBridge.log(
-                                            "📡 addHeader → " + key + " = " + value
-                                    );
+                                for (Map.Entry<?, ?> e : map.entrySet()) {
+                                    String key = String.valueOf(e.getKey());
+                                    List<?> values = (List<?>) e.getValue();
+                                    for (Object v : values) {
+                                        XposedBridge.log("📡 headers() → " + key + " = " + v);
+                                    }
                                 }
-
                             } catch (Throwable t) {
-                                XposedBridge.log("❌ addHeader error: " + t);
+                                XposedBridge.log("❌ headers() error: " + t);
+                            }
+                        }
+                    }
+            );
+
+            // build() — финальный Request
+            XposedBridge.hookAllMethods(
+                    builderCls,
+                    "build",
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Object request = param.getResult();
+                                Object url = XposedHelpers.callMethod(request, "url");
+                                Object headers = XposedHelpers.callMethod(request, "headers");
+
+                                XposedBridge.log("🧠 REQUEST BUILT → " + url);
+
+                                Map<?, ?> map = (Map<?, ?>) XposedHelpers.callMethod(headers, "toMultimap");
+                                for (Map.Entry<?, ?> e : map.entrySet()) {
+                                    String key = String.valueOf(e.getKey());
+                                    List<?> values = (List<?>) e.getValue();
+                                    for (Object v : values) {
+                                        XposedBridge.log("📡 FINAL HEADER → " + key + " = " + v);
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log("❌ build() error: " + t);
                             }
                         }
                     }
             );
 
         } catch (Throwable t) {
-            XposedBridge.log("❌ Failed to hook addHeader: " + t);
+            XposedBridge.log("❌ Failed to hook Request.Builder: " + t);
         }
+    }
+
+    private XC_MethodHook headerHook(String tag) {
+        return new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    String key = String.valueOf(param.args[0]);
+                    String value = String.valueOf(param.args[1]);
+
+                    XposedBridge.log("📡 " + tag + " → " + key + " = " + value);
+                } catch (Throwable t) {
+                    XposedBridge.log("❌ " + tag + " error: " + t);
+                }
+            }
+        };
     }
 }
