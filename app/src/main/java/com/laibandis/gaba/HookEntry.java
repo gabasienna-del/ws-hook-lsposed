@@ -20,43 +20,41 @@ public class HookEntry implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
-        boolean ok = false;
+        boolean match = false;
         for (String p : TARGETS) {
             if (p.equals(lpparam.packageName)) {
-                ok = true;
+                match = true;
                 break;
             }
         }
-        if (!ok) return;
+        if (!match) return;
 
         XposedBridge.log(TAG + " loaded for " + lpparam.packageName);
 
-        hookInterceptor(lpparam);
+        hookRealInterceptorChain(lpparam);
     }
 
-    private void hookInterceptor(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookRealInterceptorChain(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
-                    "okhttp3.Interceptor",
+                    "okhttp3.internal.http.RealInterceptorChain",
                     lpparam.classLoader,
-                    "intercept",
-                    "okhttp3.Interceptor$Chain",
+                    "proceed",
+                    "okhttp3.Request",
                     new XC_MethodHook() {
 
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                Object chain = param.args[0];
-                                Object request = XposedHelpers.callMethod(chain, "request");
+                                Object request = param.args[0];
 
+                                Object urlObj = XposedHelpers.callMethod(request, "url");
                                 String url = String.valueOf(
-                                        XposedHelpers.callMethod(
-                                                XposedHelpers.callMethod(request, "url"),
-                                                "toString"
-                                        )
+                                        XposedHelpers.callMethod(urlObj, "toString")
                                 );
 
                                 Object headers = XposedHelpers.callMethod(request, "headers");
+
                                 XposedBridge.log(TAG + " ▶ URL: " + url);
                                 XposedBridge.log(TAG + " ▶ HEADERS:\n" + headers);
 
@@ -64,14 +62,14 @@ public class HookEntry implements IXposedHookLoadPackage {
                                 if (body != null) {
                                     Buffer buffer = new Buffer();
                                     XposedHelpers.callMethod(body, "writeTo", buffer);
-                                    String data = buffer.readString(StandardCharsets.UTF_8);
-                                    if (!data.isEmpty()) {
-                                        XposedBridge.log(TAG + " ▶ BODY:\n" + data);
+                                    String bodyStr = buffer.readString(StandardCharsets.UTF_8);
+                                    if (!bodyStr.isEmpty()) {
+                                        XposedBridge.log(TAG + " ▶ BODY:\n" + bodyStr);
                                     }
                                 }
 
                             } catch (Throwable t) {
-                                XposedBridge.log(TAG + " request parse error: " + t);
+                                XposedBridge.log(TAG + " request error: " + t);
                             }
                         }
 
@@ -79,6 +77,8 @@ public class HookEntry implements IXposedHookLoadPackage {
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
                                 Object response = param.getResult();
+                                if (response == null) return;
+
                                 Object body = XposedHelpers.callMethod(response, "body");
                                 if (body == null) return;
 
@@ -86,21 +86,23 @@ public class HookEntry implements IXposedHookLoadPackage {
                                 XposedHelpers.callMethod(source, "request", Long.MAX_VALUE);
 
                                 Object buffer = XposedHelpers.callMethod(source, "buffer");
-                                String resp = XposedHelpers.callMethod(buffer, "clone")
-                                        .toString();
+                                String resp = XposedHelpers.callMethod(buffer, "clone").toString();
 
                                 if (!resp.isEmpty()) {
                                     XposedBridge.log(TAG + " ◀ RESPONSE:\n" + resp);
                                 }
 
                             } catch (Throwable t) {
-                                XposedBridge.log(TAG + " response parse error: " + t);
+                                XposedBridge.log(TAG + " response error: " + t);
                             }
                         }
                     }
             );
+
+            XposedBridge.log(TAG + " RealInterceptorChain hooked OK");
+
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " interceptor hook failed: " + t);
+            XposedBridge.log(TAG + " hook failed: " + t);
         }
     }
 }
