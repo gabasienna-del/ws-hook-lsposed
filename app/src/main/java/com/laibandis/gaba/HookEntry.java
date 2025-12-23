@@ -1,108 +1,85 @@
 package com.laibandis.gaba;
 
+import android.util.Log;
+
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
-import okhttp3.Request;
-import okhttp3.WebSocket;
-import okhttp3.WebSocketListener;
 
 public class HookEntry implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
 
-        if (!lpparam.packageName.equals("kz.asemainala.app")
-                && !lpparam.packageName.equals("sinet.startup.inDriver")) {
+        if (!"sinet.startup.inDriver".equals(lpparam.packageName)
+                && !"kz.asemainala.app".equals(lpparam.packageName)) {
             return;
         }
 
         XposedBridge.log("🔥 HTTP/WS HOOK loaded for " + lpparam.packageName);
 
-        /* =========================
-           WebSocket connect hook
-           ========================= */
         try {
-            XposedHelpers.findAndHookMethod(
+            // === Load classes via app ClassLoader ===
+            Class<?> OkHttpClient = XposedHelpers.findClass(
                     "okhttp3.OkHttpClient",
-                    lpparam.classLoader,
+                    lpparam.classLoader
+            );
+
+            Class<?> Request = XposedHelpers.findClass(
+                    "okhttp3.Request",
+                    lpparam.classLoader
+            );
+
+            Class<?> WebSocketListener = XposedHelpers.findClass(
+                    "okhttp3.WebSocketListener",
+                    lpparam.classLoader
+            );
+
+            // === Hook newWebSocket ===
+            XposedHelpers.findAndHookMethod(
+                    OkHttpClient,
                     "newWebSocket",
-                    Request.class,
-                    WebSocketListener.class,
+                    Request,
+                    WebSocketListener,
                     new XC_MethodHook() {
 
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-
-                            Request req = (Request) param.args[0];
-                            WebSocketListener listener = (WebSocketListener) param.args[1];
-
                             try {
-                                XposedBridge.log("🌐 WS CONNECT → " + req.url());
-                            } catch (Throwable ignored) {}
+                                Object request = param.args[0];
+                                Object url = XposedHelpers.callMethod(request, "url");
 
-                            hookWebSocketListener(listener);
-                        }
-                    }
-            );
-        } catch (Throwable t) {
-            XposedBridge.log("❌ WS hook error: " + t);
-        }
-    }
+                                XposedBridge.log("🧠 WS CONNECT → " + url);
 
-    /* =========================
-       WebSocket listener hooks
-       ========================= */
-    private void hookWebSocketListener(Object listener) {
+                                Object headers = XposedHelpers.callMethod(request, "headers");
+                                XposedBridge.log("🧠 WS HEADERS → " + headers);
 
-        if (listener == null) return;
-
-        Class<?> cls = listener.getClass();
-        XposedBridge.log("👂 WS Listener class → " + cls.getName());
-
-        /* -------- TEXT MESSAGE -------- */
-        try {
-            XposedHelpers.findAndHookMethod(
-                    cls,
-                    "onMessage",
-                    WebSocket.class,
-                    String.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            String msg = (String) param.args[1];
-                            XposedBridge.log("📩 WS TEXT: " + msg);
-                        }
-                    }
-            );
-        } catch (Throwable t) {
-            XposedBridge.log("⚠️ WS text hook skip: " + t);
-        }
-
-        /* -------- BINARY MESSAGE (Ls2/m) -------- */
-        try {
-            XposedHelpers.findAndHookMethod(
-                    cls,
-                    "onMessage",
-                    WebSocket.class,
-                    Object.class, // ⚠️ НЕ okio.ByteString
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Object bs = param.args[1];
-                                byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
-                                XposedBridge.log("📦 WS BYTES len=" + data.length);
                             } catch (Throwable t) {
-                                XposedBridge.log("❌ WS bytes error: " + t);
+                                XposedBridge.log("❌ WS beforeHook error: "
+                                        + Log.getStackTraceString(t));
+                            }
+                        }
+
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Object ws = param.getResult();
+                                XposedBridge.log("✅ WS OBJECT → " + ws);
+                            } catch (Throwable t) {
+                                XposedBridge.log("❌ WS afterHook error: "
+                                        + Log.getStackTraceString(t));
                             }
                         }
                     }
             );
+
+            XposedBridge.log("✅ newWebSocket hook OK");
+
         } catch (Throwable t) {
-            XposedBridge.log("⚠️ WS binary hook skip: " + t);
+            XposedBridge.log("❌ WS hook failed: "
+                    + Log.getStackTraceString(t));
         }
     }
 }
