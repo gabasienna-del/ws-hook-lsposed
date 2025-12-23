@@ -1,5 +1,8 @@
 package com.laibandis.gaba;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -11,74 +14,113 @@ public class HookEntry implements IXposedHookLoadPackage {
     private static final String TARGET = "kz.asemainala.app";
 
     @Override
-    public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
         if (!TARGET.equals(lpparam.packageName)) return;
 
-        XposedBridge.log("🔥 HTTP-HOOK loaded for " + lpparam.packageName);
+        XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
 
-        // ==============================
-        // STEP 1 — HTTP HOOK (LOGIN / TOKEN)
-        // ==============================
+        hookWebSocketSend(lpparam);
+        hookWebSocketListener(lpparam);
+    }
 
+    /* ===============================
+       WebSocket SEND (text + binary)
+       =============================== */
+    private void hookWebSocketSend(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
+            Class<?> wsClass = XposedHelpers.findClass(
+                    "okhttp3.RealWebSocket",
+                    lpparam.classLoader
+            );
+
+            // send(String)
             XposedHelpers.findAndHookMethod(
-                    "okhttp3.RealCall",
-                    lpparam.classLoader,
-                    "execute",
+                    wsClass,
+                    "send",
+                    String.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            try {
-                                Object call = param.thisObject;
-                                Object request = XposedHelpers.callMethod(call, "request");
-
-                                String method = (String) XposedHelpers.callMethod(request, "method");
-                                Object url = XposedHelpers.callMethod(request, "url");
-
-                                XposedBridge.log("🌐 HTTP EXECUTE → " + method + " " + url);
-
-                                Object headers = XposedHelpers.callMethod(request, "headers");
-                                XposedBridge.log("📩 HEADERS → " + headers.toString());
-
-                                Object body = XposedHelpers.callMethod(request, "body");
-                                if (body != null) {
-                                    XposedBridge.log("📦 BODY CLASS → " + body.getClass().getName());
-                                }
-                            } catch (Throwable t) {
-                                XposedBridge.log("❌ HTTP execute inner error: " + t);
-                            }
+                            String msg = (String) param.args[0];
+                            XposedBridge.log("📤 WS SEND TEXT → " + msg);
                         }
                     }
             );
-        } catch (Throwable t) {
-            XposedBridge.log("❌ HTTP execute hook failed: " + t);
-        }
 
-        try {
+            // send(ByteString)
             XposedHelpers.findAndHookMethod(
-                    "okhttp3.RealCall",
-                    lpparam.classLoader,
-                    "enqueue",
-                    "okhttp3.Callback",
+                    wsClass,
+                    "send",
+                    XposedHelpers.findClass("okio.ByteString", lpparam.classLoader),
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            try {
-                                Object call = param.thisObject;
-                                Object request = XposedHelpers.callMethod(call, "request");
-
-                                String method = (String) XposedHelpers.callMethod(request, "method");
-                                Object url = XposedHelpers.callMethod(request, "url");
-
-                                XposedBridge.log("🌐 HTTP ENQUEUE → " + method + " " + url);
-                            } catch (Throwable t) {
-                                XposedBridge.log("❌ HTTP enqueue inner error: " + t);
-                            }
+                            Object bs = param.args[0];
+                            byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
+                            XposedBridge.log("📤 WS SEND BIN → " + bytesToHex(data));
                         }
                     }
             );
+
         } catch (Throwable t) {
-            XposedBridge.log("❌ HTTP enqueue hook failed: " + t);
+            XposedBridge.log("❌ WS SEND hook failed: " + t);
         }
+    }
+
+    /* ===============================
+       WebSocket RECEIVE (AUTH HERE)
+       =============================== */
+    private void hookWebSocketListener(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> listener = XposedHelpers.findClass(
+                    "okhttp3.WebSocketListener",
+                    lpparam.classLoader
+            );
+
+            // onMessage(String)
+            XposedHelpers.findAndHookMethod(
+                    listener,
+                    "onMessage",
+                    Object.class,
+                    String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            String msg = (String) param.args[1];
+                            XposedBridge.log("📥 WS RECV TEXT → " + msg);
+                        }
+                    }
+            );
+
+            // onMessage(ByteString)
+            XposedHelpers.findAndHookMethod(
+                    listener,
+                    "onMessage",
+                    Object.class,
+                    XposedHelpers.findClass("okio.ByteString", lpparam.classLoader),
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            Object bs = param.args[1];
+                            byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
+                            XposedBridge.log("📥 WS RECV BIN → " + bytesToHex(data));
+                        }
+                    }
+            );
+
+        } catch (Throwable t) {
+            XposedBridge.log("❌ WS LISTENER hook failed: " + t);
+        }
+    }
+
+    /* ===============================
+       Utils
+       =============================== */
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
     }
 }
