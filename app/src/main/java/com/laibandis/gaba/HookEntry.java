@@ -17,48 +17,47 @@ public class HookEntry implements IXposedHookLoadPackage {
         XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
 
         try {
-            Class<?> wsListener =
-                    XposedHelpers.findClass(
-                            "okhttp3.WebSocketListener",
-                            lpparam.classLoader
-                    );
-
-            // onMessage(WebSocket, String)
-            XposedHelpers.findAndHookMethod(
-                    wsListener,
-                    "onMessage",
-                    Object.class,
-                    String.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            String text = (String) param.args[1];
-                            XposedBridge.log("💬 WS TEXT → " + text);
-                        }
-                    }
+            Class<?> wsListener = XposedHelpers.findClass(
+                    "okhttp3.WebSocketListener",
+                    lpparam.classLoader
             );
 
-            // onMessage(WebSocket, ByteString)
-            XposedHelpers.findAndHookMethod(
+            XposedHelpers.hookAllMethods(
                     wsListener,
                     "onMessage",
-                    Object.class,
-                    Object.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            Object byteString = param.args[1];
-                            byte[] data = (byte[]) XposedHelpers.callMethod(byteString, "toByteArray");
-                            String hex = bytesToHex(data);
-                            XposedBridge.log("📦 WS BINARY HEX → " + hex);
+
+                            if (param.args.length < 2) return;
+
+                            Object payload = param.args[1];
+
+                            // TEXT
+                            if (payload instanceof String) {
+                                XposedBridge.log("💬 WS TEXT → " + payload);
+                                return;
+                            }
+
+                            // BINARY (ByteString)
+                            try {
+                                byte[] data = (byte[]) XposedHelpers.callMethod(
+                                        payload,
+                                        "toByteArray"
+                                );
+                                String hex = bytesToHex(data);
+                                XposedBridge.log("📦 WS BINARY HEX → " + hex);
+                            } catch (Throwable ignore) {
+                                // not ByteString
+                            }
                         }
                     }
             );
 
-            XposedBridge.log("✅ WS-HOOK WebSocketListener active");
+            XposedBridge.log("✅ WS-HOOK WebSocketListener.onMessage hooked");
 
         } catch (Throwable t) {
-            XposedBridge.log("❌ WS-HOOK error: " + t);
+            XposedBridge.log("❌ WS-HOOK fatal error: " + t);
         }
     }
 
