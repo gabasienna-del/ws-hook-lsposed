@@ -13,88 +13,94 @@ public class HookEntry implements IXposedHookLoadPackage {
 
     private static final String TAG = "🔥 HTTP-HOOK";
 
-    // Целевые приложения
-    private static final String[] TARGETS = new String[] {
+    private static final String[] TARGETS = {
             "kz.asemainala.app",
             "sinet.startup.inDriver"
     };
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
-        boolean match = false;
+        boolean ok = false;
         for (String p : TARGETS) {
             if (p.equals(lpparam.packageName)) {
-                match = true;
+                ok = true;
                 break;
             }
         }
-        if (!match) return;
+        if (!ok) return;
 
         XposedBridge.log(TAG + " loaded for " + lpparam.packageName);
 
-        hookRequestBody(lpparam);
-        hookResponseBody(lpparam);
+        hookInterceptor(lpparam);
     }
 
-    /* ===============================
-       HTTP REQUEST BODY
-       =============================== */
-    private void hookRequestBody(XC_LoadPackage.LoadPackageParam lpparam) {
+    private void hookInterceptor(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
             XposedHelpers.findAndHookMethod(
-                    "okhttp3.RequestBody",
+                    "okhttp3.Interceptor",
                     lpparam.classLoader,
-                    "writeTo",
-                    "okio.BufferedSink",
+                    "intercept",
+                    "okhttp3.Interceptor$Chain",
                     new XC_MethodHook() {
+
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                Buffer buffer = new Buffer();
-                                Object body = param.thisObject;
+                                Object chain = param.args[0];
+                                Object request = XposedHelpers.callMethod(chain, "request");
 
-                                XposedHelpers.callMethod(body, "writeTo", buffer);
+                                String url = String.valueOf(
+                                        XposedHelpers.callMethod(
+                                                XposedHelpers.callMethod(request, "url"),
+                                                "toString"
+                                        )
+                                );
 
-                                String data = buffer.readString(StandardCharsets.UTF_8);
-                                if (data != null && data.length() > 0 && data.length() < 20000) {
-                                    XposedBridge.log(TAG + " ▶ REQUEST BODY:\n" + data);
+                                Object headers = XposedHelpers.callMethod(request, "headers");
+                                XposedBridge.log(TAG + " ▶ URL: " + url);
+                                XposedBridge.log(TAG + " ▶ HEADERS:\n" + headers);
+
+                                Object body = XposedHelpers.callMethod(request, "body");
+                                if (body != null) {
+                                    Buffer buffer = new Buffer();
+                                    XposedHelpers.callMethod(body, "writeTo", buffer);
+                                    String data = buffer.readString(StandardCharsets.UTF_8);
+                                    if (!data.isEmpty()) {
+                                        XposedBridge.log(TAG + " ▶ BODY:\n" + data);
+                                    }
                                 }
+
                             } catch (Throwable t) {
-                                XposedBridge.log(TAG + " body error: " + t);
+                                XposedBridge.log(TAG + " request parse error: " + t);
                             }
                         }
-                    }
-            );
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + " hook RequestBody failed: " + t);
-        }
-    }
 
-    /* ===============================
-       HTTP RESPONSE BODY
-       =============================== */
-    private void hookResponseBody(XC_LoadPackage.LoadPackageParam lpparam) {
-        try {
-            XposedHelpers.findAndHookMethod(
-                    "okhttp3.ResponseBody",
-                    lpparam.classLoader,
-                    "string",
-                    new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) {
                             try {
-                                String resp = (String) param.getResult();
-                                if (resp != null && resp.length() > 0 && resp.length() < 50000) {
+                                Object response = param.getResult();
+                                Object body = XposedHelpers.callMethod(response, "body");
+                                if (body == null) return;
+
+                                Object source = XposedHelpers.callMethod(body, "source");
+                                XposedHelpers.callMethod(source, "request", Long.MAX_VALUE);
+
+                                Object buffer = XposedHelpers.callMethod(source, "buffer");
+                                String resp = XposedHelpers.callMethod(buffer, "clone")
+                                        .toString();
+
+                                if (!resp.isEmpty()) {
                                     XposedBridge.log(TAG + " ◀ RESPONSE:\n" + resp);
                                 }
+
                             } catch (Throwable t) {
-                                XposedBridge.log(TAG + " response error: " + t);
+                                XposedBridge.log(TAG + " response parse error: " + t);
                             }
                         }
                     }
             );
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " hook ResponseBody failed: " + t);
+            XposedBridge.log(TAG + " interceptor hook failed: " + t);
         }
     }
 }
