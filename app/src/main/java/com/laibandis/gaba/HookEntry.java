@@ -1,17 +1,12 @@
 package com.laibandis.gaba;
 
-import java.nio.charset.StandardCharsets;
-
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
-import okio.Buffer;
 
 public class HookEntry implements IXposedHookLoadPackage {
-
-    private static final String TAG = "🔥 HTTP-HOOK";
 
     private static final String[] TARGETS = {
             "kz.asemainala.app",
@@ -20,89 +15,112 @@ public class HookEntry implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
-        boolean match = false;
-        for (String p : TARGETS) {
-            if (p.equals(lpparam.packageName)) {
-                match = true;
+
+        boolean target = false;
+        for (String pkg : TARGETS) {
+            if (pkg.equals(lpparam.packageName)) {
+                target = true;
                 break;
             }
         }
-        if (!match) return;
+        if (!target) return;
 
-        XposedBridge.log(TAG + " loaded for " + lpparam.packageName);
+        XposedBridge.log("🔥 HTTP-HOOK loaded for " + lpparam.packageName);
 
         hookRealInterceptorChain(lpparam);
+        hookWebSocket(lpparam);
     }
 
+    /* =========================
+       OkHttp HTTP hook
+       ========================= */
     private void hookRealInterceptorChain(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            XposedHelpers.findAndHookMethod(
+            Class<?> chainCls = XposedHelpers.findClass(
                     "okhttp3.internal.http.RealInterceptorChain",
-                    lpparam.classLoader,
-                    "proceed",
-                    "okhttp3.Request",
-                    new XC_MethodHook() {
+                    lpparam.classLoader
+            );
 
+            XposedHelpers.findAndHookMethod(
+                    chainCls,
+                    "proceed",
+                    XposedHelpers.findClass("okhttp3.Request", lpparam.classLoader),
+                    new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
                             try {
-                                Object request = param.args[0];
+                                Object req = param.args[0];
+                                Object url = XposedHelpers.callMethod(req, "url");
+                                Object headers = XposedHelpers.callMethod(req, "headers");
 
-                                Object urlObj = XposedHelpers.callMethod(request, "url");
-                                String url = String.valueOf(
-                                        XposedHelpers.callMethod(urlObj, "toString")
-                                );
-
-                                Object headers = XposedHelpers.callMethod(request, "headers");
-
-                                XposedBridge.log(TAG + " ▶ URL: " + url);
-                                XposedBridge.log(TAG + " ▶ HEADERS:\n" + headers);
-
-                                Object body = XposedHelpers.callMethod(request, "body");
-                                if (body != null) {
-                                    Buffer buffer = new Buffer();
-                                    XposedHelpers.callMethod(body, "writeTo", buffer);
-                                    String bodyStr = buffer.readString(StandardCharsets.UTF_8);
-                                    if (!bodyStr.isEmpty()) {
-                                        XposedBridge.log(TAG + " ▶ BODY:\n" + bodyStr);
-                                    }
-                                }
-
+                                XposedBridge.log("🔥 HTTP-HOOK ▶ URL: " + url);
+                                XposedBridge.log("🔥 HTTP-HOOK ▶ HEADERS:\n" + headers);
                             } catch (Throwable t) {
-                                XposedBridge.log(TAG + " request error: " + t);
-                            }
-                        }
-
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Object response = param.getResult();
-                                if (response == null) return;
-
-                                Object body = XposedHelpers.callMethod(response, "body");
-                                if (body == null) return;
-
-                                Object source = XposedHelpers.callMethod(body, "source");
-                                XposedHelpers.callMethod(source, "request", Long.MAX_VALUE);
-
-                                Object buffer = XposedHelpers.callMethod(source, "buffer");
-                                String resp = XposedHelpers.callMethod(buffer, "clone").toString();
-
-                                if (!resp.isEmpty()) {
-                                    XposedBridge.log(TAG + " ◀ RESPONSE:\n" + resp);
-                                }
-
-                            } catch (Throwable t) {
-                                XposedBridge.log(TAG + " response error: " + t);
+                                XposedBridge.log("❌ HTTP request log error: " + t);
                             }
                         }
                     }
             );
 
-            XposedBridge.log(TAG + " RealInterceptorChain hooked OK");
+            XposedBridge.log("🔥 HTTP-HOOK RealInterceptorChain hooked OK");
 
         } catch (Throwable t) {
-            XposedBridge.log(TAG + " hook failed: " + t);
+            XposedBridge.log("❌ HTTP hook error: " + t);
+        }
+    }
+
+    /* =========================
+       WebSocket hook
+       ========================= */
+    private void hookWebSocket(XC_LoadPackage.LoadPackageParam lpparam) {
+        try {
+            Class<?> wsClass = XposedHelpers.findClass(
+                    "okhttp3.internal.ws.RealWebSocket",
+                    lpparam.classLoader
+            );
+
+            // TEXT messages
+            XposedHelpers.findAndHookMethod(
+                    wsClass,
+                    "onMessage",
+                    String.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            String msg = (String) param.args[0];
+                            if (msg != null && msg.length() > 2) {
+                                XposedBridge.log("🔥 WS ◀ STRING:\n" + msg);
+                            }
+                        }
+                    }
+            );
+
+            // BINARY messages
+            XposedHelpers.findAndHookMethod(
+                    wsClass,
+                    "onMessage",
+                    XposedHelpers.findClass("okio.ByteString", lpparam.classLoader),
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                Object bs = param.args[0];
+                                byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
+                                String text = new String(data);
+                                if (!text.isEmpty()) {
+                                    XposedBridge.log("🔥 WS ◀ BYTES:\n" + text);
+                                }
+                            } catch (Throwable t) {
+                                XposedBridge.log("❌ WS bytes decode error: " + t);
+                            }
+                        }
+                    }
+            );
+
+            XposedBridge.log("🔥 WS-HOOK RealWebSocket.onMessage hooked");
+
+        } catch (Throwable t) {
+            XposedBridge.log("❌ WS hook error: " + t);
         }
     }
 }
