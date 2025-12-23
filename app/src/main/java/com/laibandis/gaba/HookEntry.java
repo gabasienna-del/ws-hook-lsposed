@@ -6,63 +6,67 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
+import java.nio.ByteBuffer;
+
 public class HookEntry implements IXposedHookLoadPackage {
 
     private static final String TARGET = "kz.asemainala.app";
 
     @Override
-    public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
-        if (!TARGET.equals(lpparam.packageName)) return;
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
+        if (!lpparam.packageName.equals(TARGET)) return;
 
         XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
 
+        // ========== TEXT WS ==========
         try {
-            Class<?> wsListener = XposedHelpers.findClass(
-                    "okhttp3.WebSocketListener",
-                    lpparam.classLoader
-            );
-
-            XposedHelpers.hookAllMethods(
-                    wsListener,
-                    "onMessage",
+            XposedHelpers.findAndHookMethod(
+                    "okhttp3.RealWebSocket",
+                    lpparam.classLoader,
+                    "send",
+                    String.class,
                     new XC_MethodHook() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-
-                            if (param.args.length < 2) return;
-
-                            Object payload = param.args[1];
-
-                            // TEXT
-                            if (payload instanceof String) {
-                                XposedBridge.log("💬 WS TEXT → " + payload);
-                                return;
-                            }
-
-                            // BINARY (ByteString)
-                            try {
-                                byte[] data = (byte[]) XposedHelpers.callMethod(
-                                        payload,
-                                        "toByteArray"
-                                );
-                                String hex = bytesToHex(data);
-                                XposedBridge.log("📦 WS BINARY HEX → " + hex);
-                            } catch (Throwable ignore) {
-                                // not ByteString
-                            }
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            String msg = (String) param.args[0];
+                            XposedBridge.log("🟢 WS TEXT → " + msg);
                         }
                     }
             );
-
-            XposedBridge.log("✅ WS-HOOK WebSocketListener.onMessage hooked");
-
         } catch (Throwable t) {
-            XposedBridge.log("❌ WS-HOOK fatal error: " + t);
+            XposedBridge.log("❌ TEXT hook failed: " + t);
+        }
+
+        // ========== BINARY WS ==========
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "okhttp3.RealWebSocket",
+                    lpparam.classLoader,
+                    "send",
+                    ByteBuffer.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            ByteBuffer buf = (ByteBuffer) param.args[0];
+                            if (buf == null) return;
+
+                            byte[] data = new byte[buf.remaining()];
+                            buf.get(data);
+
+                            XposedBridge.log("🔵 WS BINARY (" + data.length + " bytes)");
+                            XposedBridge.log("HEX → " + bytesToHex(data));
+
+                            buf.rewind();
+                        }
+                    }
+            );
+        } catch (Throwable t) {
+            XposedBridge.log("❌ BINARY hook failed: " + t);
         }
     }
 
     private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        StringBuilder sb = new StringBuilder();
         for (byte b : bytes) {
             sb.append(String.format("%02x", b));
         }
