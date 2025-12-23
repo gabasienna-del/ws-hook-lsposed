@@ -1,8 +1,5 @@
 package com.laibandis.gaba;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -11,45 +8,55 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class HookEntry implements IXposedHookLoadPackage {
 
-    private static final String TARGET = "kz.asemainala.app";
+    private static final String[] TARGETS = {
+            "kz.asemainala.app",
+            "sinet.startup.inDriver"
+    };
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        if (!TARGET.equals(lpparam.packageName)) return;
+        if (!isTarget(lpparam.packageName)) return;
 
-        XposedBridge.log("🔥 WS-HOOK loaded for " + TARGET);
+        XposedBridge.log("🔥 WS-HOOK loaded for " + lpparam.packageName);
 
         hookWebSocketSend(lpparam);
         hookWebSocketListener(lpparam);
     }
 
+    private boolean isTarget(String pkg) {
+        for (String t : TARGETS) {
+            if (t.equals(pkg)) return true;
+        }
+        return false;
+    }
+
     /* ===============================
-       WebSocket SEND (text + binary)
+       WebSocket SEND
        =============================== */
     private void hookWebSocketSend(XC_LoadPackage.LoadPackageParam lpparam) {
         try {
-            Class<?> wsClass = XposedHelpers.findClass(
+            Class<?> ws = XposedHelpers.findClass(
                     "okhttp3.RealWebSocket",
                     lpparam.classLoader
             );
 
             // send(String)
             XposedHelpers.findAndHookMethod(
-                    wsClass,
+                    ws,
                     "send",
                     String.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            String msg = (String) param.args[0];
-                            XposedBridge.log("📤 WS SEND TEXT → " + msg);
+                            XposedBridge.log("📤 [" + lpparam.packageName + "] WS SEND TEXT → "
+                                    + param.args[0]);
                         }
                     }
             );
 
             // send(ByteString)
             XposedHelpers.findAndHookMethod(
-                    wsClass,
+                    ws,
                     "send",
                     XposedHelpers.findClass("okio.ByteString", lpparam.classLoader),
                     new XC_MethodHook() {
@@ -57,7 +64,8 @@ public class HookEntry implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Object bs = param.args[0];
                             byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
-                            XposedBridge.log("📤 WS SEND BIN → " + bytesToHex(data));
+                            XposedBridge.log("📤 [" + lpparam.packageName + "] WS SEND BIN → "
+                                    + bytesToHex(data));
                         }
                     }
             );
@@ -86,8 +94,8 @@ public class HookEntry implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) {
-                            String msg = (String) param.args[1];
-                            XposedBridge.log("📥 WS RECV TEXT → " + msg);
+                            XposedBridge.log("📥 [" + lpparam.packageName + "] WS RECV TEXT → "
+                                    + param.args[1]);
                         }
                     }
             );
@@ -103,7 +111,8 @@ public class HookEntry implements IXposedHookLoadPackage {
                         protected void beforeHookedMethod(MethodHookParam param) {
                             Object bs = param.args[1];
                             byte[] data = (byte[]) XposedHelpers.callMethod(bs, "toByteArray");
-                            XposedBridge.log("📥 WS RECV BIN → " + bytesToHex(data));
+                            XposedBridge.log("📥 [" + lpparam.packageName + "] WS RECV BIN → "
+                                    + bytesToHex(data));
                         }
                     }
             );
@@ -118,9 +127,7 @@ public class HookEntry implements IXposedHookLoadPackage {
        =============================== */
     private static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
+        for (byte b : bytes) sb.append(String.format("%02x", b));
         return sb.toString();
     }
 }
